@@ -16,7 +16,9 @@ body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragi
   --mono:"SF Mono",ui-monospace,Menlo,Consolas,"Roboto Mono",monospace;
 }
 .shell{position:relative;max-width:460px;min-height:100vh;margin:0 auto;background:var(--bg);box-shadow:0 0 0 1px rgba(0,0,0,.05),0 24px 80px rgba(0,0,0,.10);overflow-x:clip}
-.page{display:none;padding:14px 14px calc(74px + env(safe-area-inset-bottom))}
+.page{display:none;padding:14px 14px calc(74px + env(safe-area-inset-bottom));transition:padding-bottom .3s cubic-bezier(.2,.24,.45,.95)}
+/* 导航栏收起时同步收掉底部留白，滚到底几乎贴边 */
+body.tb-off .page{padding-bottom:calc(8px + env(safe-area-inset-bottom))}
 .page.on,#sheetHost.show,#pickerHost.show{display:block}
 /* 切板块：新页按滑块运动方向轻滑入，位移方向由内联 --dir 给（±14px） */
 .pageIn{animation:pageIn 200ms cubic-bezier(.22,.61,.36,1) both}
@@ -1102,6 +1104,7 @@ const TAB_AUTO = { last: 0, acc: 0, hidden: false };
 function tabbarHide(h) {
   if (TAB_AUTO.hidden === h) return;
   TAB_AUTO.hidden = h;
+  document.body.classList.toggle('tb-off', h);
   const bar = $('#tabbar');
   if (bar) bar.classList.toggle('hide', h);
 }
