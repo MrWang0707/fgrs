@@ -3243,38 +3243,44 @@ function markCloudAt(ts) {
   CLOUD.lastAt = ts;
   if (!CLOUD.cfg) return;
   CLOUD.cfg.lastAt = ts;
+  /* 顺带记下此刻各模块的条数，下次上传前用来判断本机是否断崖式变少 */
+  const cnt = {};
+  ['expenses', 'memos', 'schedule', 'repay'].forEach(k => { cnt[k] = (state[k] || []).length; });
+  CLOUD.cfg.cnt = cnt;
   save(CLOUD_KEY, CLOUD.cfg);
 }
 async function cloudPush(force) {
   if (!cloudReady()) return false;
-  /* 防覆盖闸：本机某模块明显少于云端时拒绝上传，防止空设备把云端账本冲掉 */
+  /* 防覆盖闸：只在「本机某模块断崖式变少」时才去云端核对条数，正常记账不额外发请求 */
   if (!force) {
     const names = { expenses: '花销', memos: '备忘', schedule: '日程', repay: '还款计划' };
-    let rp = null, remoteEmpty = false, checked = false;
-    try {
-      const r = await fetch(cloudBase() + '?select=payload&space=eq.' + encodeURIComponent(CLOUD.cfg.space), { headers: cloudHdr() });
-      if (r.ok) {
-        checked = true;
-        const z = await r.json();
-        if (!z.length) remoteEmpty = true; else rp = z[0].payload || {};
-      }
-    } catch (e) { }
-    if (checked && !remoteEmpty) {
-      const hit = ['expenses', 'memos', 'schedule', 'repay'].filter(function (k) {
-        const rn = ((rp && rp[k]) || []).length, ln = (state[k] || []).length;
-        return (rn >= 8 && ln <= 2) || (rn >= 12 && ln < rn * 0.5);
-      })[0];
-      if (hit) {
-        CLOUD.dirty = false; setCloudStatus('error');
-        toast('本机' + names[hit] + '只有 ' + (state[hit] || []).length + ' 条、云端 ' + (rp[hit] || []).length + ' 条，已阻止覆盖；要用云端的就点「云端 → 本机」');
-        return false;
-      }
-    } else if (!checked) {
-      /* 查不到云端：本机几乎空白就不推，弱网下宁可先囤在本地 */
-      if (!(state.expenses || []).length && !(state.memos || []).length && !(state.schedule || []).length) {
+    const chk = ['expenses', 'memos', 'schedule', 'repay'];
+    const last = (CLOUD.cfg && CLOUD.cfg.cnt) || {};
+    const susp = chk.filter(function (k) {
+      const ln = (state[k] || []).length, hn = last[k] == null ? -1 : +last[k];
+      return ln <= 2 || (hn >= 0 && ln < hn * 0.5);
+    });
+    if (susp.length) {
+      let rp = null, empty = false;
+      try {
+        const rows = await cloudGet('updated_at,payload');
+        if (!rows.length) empty = true; else rp = rows[0].payload || {};
+      } catch (e) { }
+      if (!empty && !rp) {
         CLOUD.dirty = true; setCloudStatus('error');
-        toast('连不上云端且本机没数据，已暂停上传');
+        toast('云端状态查不到，已暂停上传，本机数据先留着');
         return false;
+      }
+      if (!empty) {
+        const hit = susp.filter(function (k) {
+          const rn = ((rp && rp[k]) || []).length, ln = (state[k] || []).length;
+          return (rn >= 8 && ln <= 2) || (rn >= 12 && ln < rn * 0.5);
+        })[0];
+        if (hit) {
+          CLOUD.dirty = false; setCloudStatus('error');
+          toast('本机' + names[hit] + '只有 ' + (state[hit] || []).length + ' 条、云端 ' + (rp[hit] || []).length + ' 条，已阻止覆盖；要用云端的就点「云端 → 本机」');
+          return false;
+        }
       }
     }
   }
