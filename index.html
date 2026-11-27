@@ -3245,8 +3245,39 @@ function markCloudAt(ts) {
   CLOUD.cfg.lastAt = ts;
   save(CLOUD_KEY, CLOUD.cfg);
 }
-async function cloudPush() {
+async function cloudPush(force) {
   if (!cloudReady()) return false;
+  /* 防覆盖闸：本机某模块明显少于云端时拒绝上传，防止空设备把云端账本冲掉 */
+  if (!force) {
+    const names = { expenses: '花销', memos: '备忘', schedule: '日程', repay: '还款计划' };
+    let rp = null, remoteEmpty = false, checked = false;
+    try {
+      const r = await fetch(cloudBase() + '?select=payload&space=eq.' + encodeURIComponent(CLOUD.cfg.space), { headers: cloudHdr() });
+      if (r.ok) {
+        checked = true;
+        const z = await r.json();
+        if (!z.length) remoteEmpty = true; else rp = z[0].payload || {};
+      }
+    } catch (e) { }
+    if (checked && !remoteEmpty) {
+      const hit = ['expenses', 'memos', 'schedule', 'repay'].filter(function (k) {
+        const rn = ((rp && rp[k]) || []).length, ln = (state[k] || []).length;
+        return (rn >= 8 && ln <= 2) || (rn >= 12 && ln < rn * 0.5);
+      })[0];
+      if (hit) {
+        CLOUD.dirty = false; setCloudStatus('error');
+        toast('本机' + names[hit] + '只有 ' + (state[hit] || []).length + ' 条、云端 ' + (rp[hit] || []).length + ' 条，已阻止覆盖；要用云端的就点「云端 → 本机」');
+        return false;
+      }
+    } else if (!checked) {
+      /* 查不到云端：本机几乎空白就不推，弱网下宁可先囤在本地 */
+      if (!(state.expenses || []).length && !(state.memos || []).length && !(state.schedule || []).length) {
+        CLOUD.dirty = true; setCloudStatus('error');
+        toast('连不上云端且本机没数据，已暂停上传');
+        return false;
+      }
+    }
+  }
   clearTimeout(CLOUD.timer); CLOUD.timer = null;
   CLOUD.dirty = false;
   const iso = new Date().toISOString();
@@ -3282,8 +3313,8 @@ function applyCloud(p) {
   ['rules', 'expenses', 'memos', 'repay', 'schedule', 'cats'].forEach(k => {
     if (p[k] === undefined || p[k] === null) return;
     /* 云端账目是空数组而本机有账目时，宁可不覆盖（防误清空） */
-    if (k === 'expenses' && !(p.expenses || []).length && (state.expenses || []).length) {
-      toast('云端是空账目，本机有 ' + state.expenses.length + ' 笔，已跳过覆盖');
+    if (k !== 'rules' && k !== 'cats' && !(p[k] || []).length && (state[k] || []).length) {
+      toast('云端' + ({ expenses: '花销', memos: '备忘', repay: '还款计划', schedule: '日程' }[k] || k) + '是空的，本机有 ' + state[k].length + ' 条，已跳过覆盖');
       return;
     }
     state[k] = p[k];
@@ -3299,11 +3330,18 @@ async function cloudPull(rows, quiet) {
   if (!rows.length) return false;
   const at = Date.parse(rows[0].updated_at) || 0;
   if (at <= CLOUD.lastAt + 500) return false;
-  /* 自动同步（quiet）只在空设备上落地；本机已有数据时绝不自动覆盖，只有手动「云端 → 本机」才会应用 */
-  if (quiet && localHasData()) return false;
   const full = await cloudGet('updated_at,payload');
   if (!full.length) return false;
-  applyCloud(full[0].payload);
+  const p = full[0].payload || {};
+  /* 自动同步（quiet）：本机数据正常时绝不覆盖；本机几乎空白（≤2 笔且无备忘/日程）时视作空设备，允许落地 */
+  if (quiet) {
+    const thin = (state.expenses || []).length <= 2 && !(state.memos || []).length && !(state.schedule || []).length;
+    if (localHasData() && !thin) return false;
+    if (thin && ((p.expenses || []).length >= 8 || (p.memos || []).length >= 8)) {
+      toast('云端有 ' + (p.expenses || []).length + ' 笔花销 / ' + (p.memos || []).length + ' 条备忘，已自动恢复');
+    }
+  }
+  applyCloud(p);
   markCloudAt(Date.parse(full[0].updated_at) || at);
   if (!quiet) toast('已同步最新数据');
   return true;
@@ -3408,7 +3446,7 @@ function openCloudPanel() {
   $('#cPush').addEventListener('click', async () => {
     if (!cloudReady()) { toast('先填上面的三项并连接'); return; }
     if (!confirm('把本机数据覆盖到云端？其他人已同步的改动会丢')) return;
-    try { await cloudPush(); toast('已上传到云端'); }
+    try { await cloudPush(true); toast('已上传到云端'); }
     catch (e) { toast(e.message); }
   });
 
