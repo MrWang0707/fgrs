@@ -3335,13 +3335,13 @@ async function cloudPull(rows, quiet) {
   rows = rows || await cloudGet('updated_at');
   if (!rows.length) return false;
   const at = Date.parse(rows[0].updated_at) || 0;
-  if (at <= CLOUD.lastAt + 500) return false;
+  /* 本机几乎空白（≤2 笔且无备忘/日程）视作掉数据的设备，这时不计较云端时间戳新旧，一律拉回来 */
+  const thin = (state.expenses || []).length <= 2 && !(state.memos || []).length && !(state.schedule || []).length;
+  if (at <= CLOUD.lastAt + 500 && !(quiet && thin && localHasData())) return false;
   const full = await cloudGet('updated_at,payload');
   if (!full.length) return false;
   const p = full[0].payload || {};
-  /* 自动同步（quiet）：本机数据正常时绝不覆盖；本机几乎空白（≤2 笔且无备忘/日程）时视作空设备，允许落地 */
   if (quiet) {
-    const thin = (state.expenses || []).length <= 2 && !(state.memos || []).length && !(state.schedule || []).length;
     if (localHasData() && !thin) return false;
     if (thin && ((p.expenses || []).length >= 8 || (p.memos || []).length >= 8)) {
       toast('云端有 ' + (p.expenses || []).length + ' 笔花销 / ' + (p.memos || []).length + ' 条备忘，已自动恢复');
