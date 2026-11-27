@@ -1106,12 +1106,24 @@ function tabbarHide(h) {
   TAB_AUTO.hidden = h;
   /* 收起时底部留白同步收缩，会把 scrollY 顶回去，那一段位移不是用户滑动，忽略掉 */
   if (h) TAB_AUTO.quietUntil = performance.now() + 380;
+  tbMaxAt = -1e9;   /* 页面高度因留白变化而改变，下次滚动手势重新测量 */
   document.body.classList.toggle('tb-off', h);
   const bar = $('#tabbar');
   if (bar) bar.classList.toggle('hide', h);
 }
+/* 滚动高频路径：scrollHeight 每读一次都要强制布局，滚动中途每帧读会拖帧。
+   400ms 内复用同一次测量，留白收放后强制失效重测 */
+let tbMaxY = 0, tbMaxAt = -1e9;
+function scrollMaxY() {
+  const t = performance.now();
+  if (t - tbMaxAt > 400) {
+    tbMaxAt = t;
+    tbMaxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  }
+  return tbMaxY;
+}
 function tabbarTrack() {
-  const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+  const maxY = scrollMaxY();
   /* 夹到有效区间：到底/到顶继续拉时系统会给出越界值（橡皮筋回弹），夹掉后位移为 0，不误判 */
   const y = Math.min(Math.max(window.scrollY, 0), maxY);
   const d = y - TAB_AUTO.last;
